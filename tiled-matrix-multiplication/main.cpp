@@ -60,15 +60,15 @@ int main(int argc, char **argv) {
 
   wbTime_start(GPU, "Allocating GPU memory.");
   // Device memory allocation (A, B and C matrices)
-  cudaMalloc((void **) &deviceA, sizeof(float) * numARows * numAColumns);
-  cudaMalloc((void **) &deviceB, sizeof(float) * numBRows * numBColumns);
-  cudaMalloc((void **) &deviceC, sizeof(float) * numCRows * numCColumns);
+  wbCheck(cudaMalloc((void **) &deviceA, sizeof(float) * numARows * numAColumns));
+  wbCheck(cudaMalloc((void **) &deviceB, sizeof(float) * numBRows * numBColumns));
+  wbCheck(cudaMalloc((void **) &deviceC, sizeof(float) * numCRows * numCColumns));
   wbTime_stop(GPU, "Allocating GPU memory.");
 
   wbTime_start(GPU, "Copying input memory to the GPU.");
   // Transfer input matrices to the device
-  cudaMemcpy(deviceA, hostA, sizeof(float) * numARows * numAColumns, cudaMemcpyHostToDevice);
-  cudaMemcpy(deviceB, hostB, sizeof(float) * numBRows * numBColumns, cudaMemcpyHostToDevice);
+  wbCheck(cudaMemcpy(deviceA, hostA, sizeof(float) * numARows * numAColumns, cudaMemcpyHostToDevice));
+  wbCheck(cudaMemcpy(deviceB, hostB, sizeof(float) * numBRows * numBColumns, cudaMemcpyHostToDevice));
   wbTime_stop(GPU, "Copying input memory to the GPU.");
 
   // Compute thread grid dimensions
@@ -84,13 +84,14 @@ int main(int argc, char **argv) {
 
   wbTime_start(Copy, "Copying output memory to the CPU");
   // Retrieve output
-  cudaMemcpy(hostC, deviceC, sizeof(float) * numCRows * numCColumns, cudaMemcpyDeviceToHost);
+  wbCheck(cudaMemcpy(hostC, deviceC, sizeof(float) * numCRows * numCColumns, cudaMemcpyDeviceToHost));
   wbTime_stop(Copy, "Copying output memory to the CPU");
+
   wbTime_start(GPU, "Freeing GPU Memory");
   // Free the device memory
-  cudaFree(deviceA);
-  cudaFree(deviceB);
-  cudaFree(deviceC);
+  wbCheck(cudaFree(deviceA));
+  wbCheck(cudaFree(deviceB));
+  wbCheck(cudaFree(deviceC));
   wbTime_stop(GPU, "Freeing GPU Memory");
 
   wbSolution(args, hostC, numCRows, numCColumns);
