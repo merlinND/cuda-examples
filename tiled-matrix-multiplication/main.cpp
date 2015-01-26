@@ -22,8 +22,60 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C, int numARows,
                                      int numAColumns, int numBRows,
                                      int numBColumns, int numCRows,
                                      int numCColumns) {
-  //@@ Insert code to implement matrix multiplication here
-  //@@ You have to use shared memory for this MP
+  // Each thread computes a single element of the output matrix C
+  // These shared sub-matrices hold a single tile at a time
+  __shared__ float d_A[TILE_WIDTH][TILE_WIDTH];
+  __shared__ float d_B[TILE_WIDTH][TILE_WIDTH];
+
+  // Aliases
+  int n = numAColumns; // == numBRows
+  int tX = threadIdx.x,
+      tY = threadIdx.y;
+
+  // Indices of the output cell we're computing
+  int row = (blockIdx.y * blockDim.y) + tY;
+  int col = (blockIdx.x * blockDim.x) + tX;
+  float accumulator = 0.f;
+
+  // For each tile
+  for(int t = 0; t < (n - 1) / TILE_WIDTH + 1; ++t) {
+    // Collaboratively load the tile (defaulting to 0 is we're out of boundaries)
+    // Note that we require thread blocks to be of size TILE_WIDTH * TILE_WIDTH
+
+    // Offset of this tile's corner (common to the thread block):
+    //   t * TILE_WIDTH
+    // Indices of the particular elements to load in the tile (unique to this thread):
+    int jA = (t * TILE_WIDTH) + tX,
+        iB = (t * TILE_WIDTH) + tY;
+    if(row < numARows && jA < numAColumns) {
+      d_A[tY][tX] = A[row * numAColumns + jA];
+    }
+    else {
+      d_A[tY][tX] = 0.f;
+    }
+    if(iB < numBRows && col < numBColumns) {
+      d_B[tY][tX] = B[iB * numBColumns + col];
+    }
+    else {
+      d_B[tY][tX] = 0.f;
+    }
+
+    // Wait for collaborative loading to end
+    __syncthreads();
+
+    // Compute this tile's dot-product segment using only shared memory accesses
+    for(int k = 0; k < TILE_WIDTH; ++k) {
+      accumulator += d_A[tY][k] * d_B[k][tX];
+    }
+
+    // Wait for other threads before going to the next tile
+    __syncthreads();
+  }
+
+  // Output only if this cell is within bounds
+  if(row < numCRows && col < numCColumns) {
+    C[row * numCColumns + col] = accumulator;
+  }
 }
 
 int main(int argc, char **argv) {
@@ -77,8 +129,8 @@ int main(int argc, char **argv) {
   wbTime_start(Compute, "Performing CUDA computation");
   // Launch the kernel
   matrixMultiplyShared<<<gridSize, blockSize>>>(deviceA, deviceB, deviceC,
-    numARows, numAColumns, numBRows,
-    numBColumns, numCRows, numCColumns);
+                                                numARows, numAColumns, numBRows,
+                                                numBColumns, numCRows, numCColumns);
   cudaDeviceSynchronize();
   wbTime_stop(Compute, "Performing CUDA computation");
 
