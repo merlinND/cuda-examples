@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
   wbTime_stop(GPU, "Copying input memory to the GPU.");
 
   // Compute thread grid dimensions
-  dim3 gridSize( (numCRows - 1) / TILE_WIDTH + 1, (numCColumns - 1) / TILE_WIDTH + 1, 1);
+  dim3 gridSize( (numCColumns - 1) / TILE_WIDTH + 1, (numCRows - 1) / TILE_WIDTH + 1, 1);
   dim3 blockSize(TILE_WIDTH, TILE_WIDTH, 1);
   wbTime_start(Compute, "Performing CUDA computation");
   // Launch the kernel
