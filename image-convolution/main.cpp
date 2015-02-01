@@ -26,7 +26,7 @@
  * output anything.
  */
 #define OUTPUT_TILE_SIZE 12
-#define TILE_SIZE 16 // = OUTPUT_TILE_SIZE + (MASK_WIDTH - 1)
+#define TILE_SIZE 16 // == OUTPUT_TILE_SIZE + (MASK_WIDTH - 1)
 
 /**
  * Image convolution kernel
@@ -35,7 +35,52 @@ __global__ void imageConvolution(float * inputImageData,
                                  int imageWidth, int imageHeight, int imageChannels,
                                  float * outputImageData,
                                  float const * __restrict__ maskData) {
+    // TODO: support `imageChannel` > 1
 
+    // Local copy of the input image tile we're working onto
+    __shared__ float localImage[TILE_SIZE][TILE_SIZE];
+
+    int bi = blockIdx.y,
+        bj = blockIdx.x;
+    int ti = threadIdx.y,
+        tj = threadIdx.x;
+
+    // Coordinates of the cell to load (input image)
+    int inputI = bi * blockDim.y + ti - MASK_RADIUS,
+        inputJ = bj * blockDim.x + tj - MASK_RADIUS;
+
+    // Collaboratively load mask elements into shared memory
+    // Boundary condition: replace non-existing elements by 0
+    if(inputI >= 0 && inputI < imageHeight && inputJ >= 0 && inputJ < imageWidth) {
+        localImage[ti][tj] = inputImageData[inputI * imageWidth + inputJ];
+    } else {
+        localImage[ti][tj] = 0;
+    }
+    __syncthreads();
+
+    // Convolution: not all threads have an output to write
+    if(ti < OUTPUT_TILE_SIZE && tj < OUTPUT_TILE_SIZE) {
+        // Coordinates of the cell to output (output image)
+        int outputI = bi * blockDim.y + ti,
+            outputJ = bj * blockDim.x + tj;
+        if(outputI < imageHeight && outputJ < imageWidth) {
+            // Coordinates of the top left convolution corner
+            // in the local image tile for this output cell
+            int cornerI = ti,
+                cornerJ = tj;
+
+            // Perform convolution using coefficients from `maskData`
+            float accumulator = 0;
+            for(int i = 0; i < MASK_WIDTH; ++i) {
+                for(int j = 0; j < MASK_WIDTH; ++j) {
+                    accumulator += maskData[i][j] * localImage[cornerI + i][cornerJ + j];
+                }
+            }
+
+            outputImageData[outputI][outputJ] = accumulator;
+        }
+    }
+    __syncthreads();
 }
 
 int main(int argc, char* argv[]) {
@@ -66,6 +111,7 @@ int main(int argc, char* argv[]) {
 
     assert(maskRows == MASK_WIDTH);
     assert(maskColumns == MASK_WIDTH);
+    assert(TILE_SIZE == OUTPUT_TILE_SIZE + (MASK_WIDTH - 1));
 
     imageWidth = wbImage_getWidth(inputImage);
     imageHeight = wbImage_getHeight(inputImage);
