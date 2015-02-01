@@ -14,8 +14,11 @@
         }                                                                     \
     } while(0)
 
-#define Mask_width  5
-#define Mask_radius Mask_width/2
+/**
+ * Mask has size fixed to 5x5 in this MP to simplify
+ */
+#define MASK_WIDTH  5
+#define MASK_RADIUS MASK_WIDTH/2
 
 //@@ INSERT CODE HERE
 
@@ -46,8 +49,8 @@ int main(int argc, char* argv[]) {
     inputImage = wbImport(inputImageFile);
     hostMaskData = (float *) wbImport(inputMaskFile, &maskRows, &maskColumns);
 
-    assert(maskRows == 5); /* mask height is fixed to 5 in this mp */
-    assert(maskColumns == 5); /* mask width is fixed to 5 in this mp */
+    assert(maskRows == MASK_WIDTH);
+    assert(maskColumns == MASK_WIDTH);
 
     imageWidth = wbImage_getWidth(inputImage);
     imageHeight = wbImage_getHeight(inputImage);
