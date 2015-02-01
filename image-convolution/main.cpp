@@ -21,6 +21,14 @@
 #define MASK_RADIUS MASK_WIDTH/2
 
 /**
+ * Recall each GPU tile is larger than the number of output cells since we need
+ * one thread to load each element used in the convolution. Some threads will not
+ * output anything.
+ */
+#define OUTPUT_TILE_SIZE 12
+#define TILE_SIZE 16 // = OUTPUT_TILE_SIZE + (MASK_WIDTH - 1)
+
+/**
  * Image convolution kernel
  */
 __global__ void imageConvolution(float * inputImageData,
@@ -91,10 +99,9 @@ int main(int argc, char* argv[]) {
 
     wbTime_start(Compute, "Doing the computation on the GPU");
     // Compute tile size
-    // Recall each GPU tile is larger than the number of output cells since we need
-    // one thread to load each element used in the convolution. Some threads will not
-    // output anything.
-    //@@ TODO
+    dim3 gridSize( (imageHeight - 1) / OUTPUT_TILE_SIZE + 1,
+                   (imageWidth - 1) / OUTPUT_TILE_SIZE + 1, 1);
+    dim3 blockSize( TILE_SIZE, TILE_SIZE, 1);
 
     // Launch kernel
     imageConvolution<<<gridSize, blockSize>>>(deviceInputImageData,
