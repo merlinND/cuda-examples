@@ -30,15 +30,15 @@
 
 /**
  * Image convolution kernel
+ * Assume image data uses interleaved channels
+ * Mask data is common to all channels
  */
 __global__ void imageConvolution(float * inputImageData,
-                                 int imageWidth, int imageHeight, int imageChannels,
+                                 int imageWidth, int imageHeight, int nChannels,
                                  float * outputImageData,
                                  float const * __restrict__ maskData) {
-    // TODO: support `imageChannel` > 1
-
     // Local copy of the input image tile we're working onto
-    __shared__ float localImage[TILE_SIZE][TILE_SIZE];
+    __shared__ float localImage[TILE_SIZE][TILE_SIZE][nChannels];
 
     int bi = blockIdx.y,
         bj = blockIdx.x;
@@ -52,32 +52,42 @@ __global__ void imageConvolution(float * inputImageData,
     // Collaboratively load mask elements into shared memory
     // Boundary condition: replace non-existing elements by 0
     if(inputI >= 0 && inputI < imageHeight && inputJ >= 0 && inputJ < imageWidth) {
-        localImage[ti][tj] = inputImageData[inputI * imageWidth + inputJ];
+        // Load all channels
+        int linearized = (inputI * imageWidth + inputJ) * nChannels;
+        for(int k = 0; k < nChannels; ++k) {
+            localImage[ti][tj][k] = inputImageData[linearized + k];
+        }
     } else {
-        localImage[ti][tj] = 0;
+        for(int k = 0; k < nChannels; ++k) {
+            localImage[ti][tj][k] = 0;
+        }
     }
     __syncthreads();
 
     // Convolution: not all threads have an output to write
     if(ti < OUTPUT_TILE_SIZE && tj < OUTPUT_TILE_SIZE) {
         // Coordinates of the cell to output (output image)
-        int outputI = bi * blockDim.y + ti,
-            outputJ = bj * blockDim.x + tj;
+        int outputI = bi * OUTPUT_TILE_SIZE + ti,
+            outputJ = bj * OUTPUT_TILE_SIZE + tj;
         if(outputI < imageHeight && outputJ < imageWidth) {
+            int linearized = (outputI * imageWidth + outputJ) * nChannels;
+
             // Coordinates of the top left convolution corner
             // in the local image tile for this output cell
             int cornerI = ti,
                 cornerJ = tj;
 
-            // Perform convolution using coefficients from `maskData`
-            float accumulator = 0;
-            for(int i = 0; i < MASK_WIDTH; ++i) {
-                for(int j = 0; j < MASK_WIDTH; ++j) {
-                    accumulator += maskData[i][j] * localImage[cornerI + i][cornerJ + j];
+            // Perform convolution on each channel using coefficients from `maskData`
+            for(int k = 0; k < nChannels; ++k) {
+                float accumulator = 0;
+                for(int i = 0; i < MASK_WIDTH; ++i) {
+                    for(int j = 0; j < MASK_WIDTH; ++j) {
+                        accumulator += maskData[i][j] * localImage[cornerI + i][cornerJ + j][k];
+                    }
                 }
-            }
 
-            outputImageData[outputI][outputJ] = accumulator;
+                outputImageData[linearized + k] = accumulator;
+            }
         }
     }
     __syncthreads();
