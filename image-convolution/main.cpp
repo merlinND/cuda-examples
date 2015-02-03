@@ -29,16 +29,21 @@
 #define TILE_SIZE 16 // == OUTPUT_TILE_SIZE + (MASK_WIDTH - 1)
 
 /**
+ * Number of channels assumed to 3 in this exercise (R, G, B)
+ */
+#define N_CHANNELS 3
+
+/**
  * Image convolution kernel
  * Assume image data uses interleaved channels
  * Mask data is common to all channels
  */
 __global__ void imageConvolution(float * inputImageData,
-                                 int imageWidth, int imageHeight, int nChannels,
+                                 int imageWidth, int imageHeight,
                                  float * outputImageData,
                                  float const * __restrict__ maskData) {
     // Local copy of the input image tile we're working onto
-    __shared__ float localImage[TILE_SIZE][TILE_SIZE][nChannels];
+    __shared__ float localImage[TILE_SIZE][TILE_SIZE][N_CHANNELS];
 
     int bi = blockIdx.y,
         bj = blockIdx.x;
@@ -53,12 +58,12 @@ __global__ void imageConvolution(float * inputImageData,
     // Boundary condition: replace non-existing elements by 0
     if(inputI >= 0 && inputI < imageHeight && inputJ >= 0 && inputJ < imageWidth) {
         // Load all channels
-        int linearized = (inputI * imageWidth + inputJ) * nChannels;
-        for(int k = 0; k < nChannels; ++k) {
+        int linearized = (inputI * imageWidth + inputJ) * N_CHANNELS;
+        for(int k = 0; k < N_CHANNELS; ++k) {
             localImage[ti][tj][k] = inputImageData[linearized + k];
         }
     } else {
-        for(int k = 0; k < nChannels; ++k) {
+        for(int k = 0; k < N_CHANNELS; ++k) {
             localImage[ti][tj][k] = 0;
         }
     }
@@ -70,7 +75,7 @@ __global__ void imageConvolution(float * inputImageData,
         int outputI = bi * OUTPUT_TILE_SIZE + ti,
             outputJ = bj * OUTPUT_TILE_SIZE + tj;
         if(outputI < imageHeight && outputJ < imageWidth) {
-            int linearized = (outputI * imageWidth + outputJ) * nChannels;
+            int linearized = (outputI * imageWidth + outputJ) * N_CHANNELS;
 
             // Coordinates of the top left convolution corner
             // in the local image tile for this output cell
@@ -78,11 +83,11 @@ __global__ void imageConvolution(float * inputImageData,
                 cornerJ = tj;
 
             // Perform convolution on each channel using coefficients from `maskData`
-            for(int k = 0; k < nChannels; ++k) {
+            for(int k = 0; k < N_CHANNELS; ++k) {
                 float accumulator = 0;
                 for(int i = 0; i < MASK_WIDTH; ++i) {
                     for(int j = 0; j < MASK_WIDTH; ++j) {
-                        accumulator += maskData[i][j] * localImage[cornerI + i][cornerJ + j][k];
+                        accumulator += maskData[i * MASK_WIDTH + j] * localImage[cornerI + i][cornerJ + j][k];
                     }
                 }
 
@@ -119,13 +124,16 @@ int main(int argc, char* argv[]) {
     inputImage = wbImport(inputImageFile);
     hostMaskData = (float *) wbImport(inputMaskFile, &maskRows, &maskColumns);
 
-    assert(maskRows == MASK_WIDTH);
-    assert(maskColumns == MASK_WIDTH);
-    assert(TILE_SIZE == OUTPUT_TILE_SIZE + (MASK_WIDTH - 1));
-
     imageWidth = wbImage_getWidth(inputImage);
     imageHeight = wbImage_getHeight(inputImage);
     imageChannels = wbImage_getChannels(inputImage);
+
+
+    assert(maskRows == MASK_WIDTH);
+    assert(maskColumns == MASK_WIDTH);
+    assert(TILE_SIZE == OUTPUT_TILE_SIZE + (MASK_WIDTH - 1));
+    assert(imageChannels == N_CHANNELS);
+
 
     outputImage = wbImage_new(imageWidth, imageHeight, imageChannels);
 
@@ -161,7 +169,7 @@ int main(int argc, char* argv[]) {
 
     // Launch kernel
     imageConvolution<<<gridSize, blockSize>>>(deviceInputImageData,
-                                              imageWidth, imageHeight, imageChannels,
+                                              imageWidth, imageHeight,
                                               deviceOutputImageData,
                                               deviceMaskData);
     wbTime_stop(Compute, "Doing the computation on the GPU");
