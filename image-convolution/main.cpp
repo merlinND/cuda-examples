@@ -50,9 +50,9 @@ __global__ void imageConvolution(float * inputImageData,
     int ti = threadIdx.y,
         tj = threadIdx.x;
 
-    // Coordinates of the cell to load (input image)
-    int inputI = bi * blockDim.y + ti - MASK_RADIUS,
-        inputJ = bj * blockDim.x + tj - MASK_RADIUS;
+    // Coordinates of the cell to load (input image) by this particular thread
+    int inputI = bi * OUTPUT_TILE_SIZE + ti - MASK_RADIUS,
+        inputJ = bj * OUTPUT_TILE_SIZE + tj - MASK_RADIUS;
 
     // Collaboratively load mask elements into shared memory
     // Boundary condition: replace non-existing elements by 0
@@ -71,23 +71,22 @@ __global__ void imageConvolution(float * inputImageData,
 
     // Convolution: not all threads have an output to write
     if(ti < OUTPUT_TILE_SIZE && tj < OUTPUT_TILE_SIZE) {
-        // Coordinates of the cell to output (output image)
-        int outputI = bi * OUTPUT_TILE_SIZE + ti,
-            outputJ = bj * OUTPUT_TILE_SIZE + tj;
+        // Coordinates of the cell to output (output image coordinate system)
+        int outputI = inputI + MASK_RADIUS,
+            outputJ = inputJ + MASK_RADIUS;
         if(outputI < imageHeight && outputJ < imageWidth) {
             int linearized = (outputI * imageWidth + outputJ) * N_CHANNELS;
 
             // Coordinates of the top left convolution corner
-            // in the local image tile for this output cell
-            int cornerI = ti,
-                cornerJ = tj;
+            // in the local image tile for this output cell:
+            //     (ti, tj)
 
             // Perform convolution on each channel using coefficients from `maskData`
             for(int k = 0; k < N_CHANNELS; ++k) {
                 float accumulator = 0;
                 for(int i = 0; i < MASK_WIDTH; ++i) {
                     for(int j = 0; j < MASK_WIDTH; ++j) {
-                        accumulator += maskData[i * MASK_WIDTH + j] * localImage[cornerI + i][cornerJ + j][k];
+                        accumulator += maskData[i * MASK_WIDTH + j] * localImage[ti + i][tj + j][k];
                     }
                 }
 
@@ -163,8 +162,8 @@ int main(int argc, char* argv[]) {
 
     wbTime_start(Compute, "Doing the computation on the GPU");
     // Compute tile size
-    dim3 gridSize( (imageHeight - 1) / OUTPUT_TILE_SIZE + 1,
-                   (imageWidth - 1) / OUTPUT_TILE_SIZE + 1, 1);
+    dim3 gridSize( (imageWidth - 1) / OUTPUT_TILE_SIZE + 1,
+                   (imageHeight - 1) / OUTPUT_TILE_SIZE + 1, 1);
     dim3 blockSize( TILE_SIZE, TILE_SIZE, 1);
 
     // Launch kernel
