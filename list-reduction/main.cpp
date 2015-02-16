@@ -49,16 +49,18 @@ int main(int argc, char ** argv) {
     wbLog(TRACE, "The number of output elements in the input is ", numOutputElements);
 
     wbTime_start(GPU, "Allocating GPU memory.");
-    //@@ Allocate GPU memory here
-
+    wbCheck(cudaMalloc((void **) &deviceInput, numInputElements * sizeof(float)));
+    wbCheck(cudaMalloc((void **) &deviceOutput, numOutputElements * sizeof(float)));
     wbTime_stop(GPU, "Allocating GPU memory.");
 
     wbTime_start(GPU, "Copying input memory to the GPU.");
-    //@@ Copy memory to the GPU here
-
+    wbCheck(cudaMemcpy(deviceInput, hostInput, numInputElements * sizeof(float), cudaMemcpyHostToDevice));
     wbTime_stop(GPU, "Copying input memory to the GPU.");
-    //@@ Initialize the grid and block dimensions here
 
+    //@@ Initialize the grid and block dimensions here
+    // TODO
+    dim3 gridSize(1, 1, 1);
+    dim3 blockSize(BLOCK_SIZE, 1, 1);
     wbTime_start(Compute, "Performing CUDA computation");
     //@@ Launch the GPU Kernel here
 
@@ -66,8 +68,7 @@ int main(int argc, char ** argv) {
     wbTime_stop(Compute, "Performing CUDA computation");
 
     wbTime_start(Copy, "Copying output memory to the CPU");
-    //@@ Copy the GPU memory back to the CPU here
-
+    wbCheck(cudaMemcpy(hostOutput, deviceInput, numOutputElements * sizeof(float), cudaMemcpyDeviceToHost));
     wbTime_stop(Copy, "Copying output memory to the CPU");
 
     /********************************************************************
@@ -81,8 +82,8 @@ int main(int argc, char ** argv) {
     }
 
     wbTime_start(GPU, "Freeing GPU Memory");
-    //@@ Free the GPU memory here
-
+    wbCheck(cudaFree(deviceInput));
+    wbCheck(cudaFree(deviceOutput));
     wbTime_stop(GPU, "Freeing GPU Memory");
 
     wbSolution(args, hostOutput, 1);
