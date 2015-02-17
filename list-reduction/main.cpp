@@ -1,10 +1,15 @@
-// MP Reduction
-// Given a list (lst) of length n
-// Output its sum = lst[0] + lst[1] + ... + lst[n-1];
-
 #include    <wb.h>
 
 #define BLOCK_SIZE 512 //@@ You can change this
+
+/**
+ * Uses code made available on webgpu.com
+ * by the Heterogeneous Parallel Programming MOOC teaching team
+ */
+
+// MP Reduction
+// Given a list (lst) of length n
+// Output its sum = lst[0] + lst[1] + ... + lst[n-1];
 
 #define wbCheck(stmt) do {                                                    \
         cudaError_t err = stmt;                                               \
@@ -15,11 +20,30 @@
         }                                                                     \
     } while(0)
 
-void total(float * input, float * output, int len) {
-    //@@ Load a segment of the input vector into shared memory
-    //@@ Traverse the reduction tree
-    //@@ Write the computed sum of the block to the output vector at the
-    //@@ correct index
+__global__ void total(float * input, float * output, int len) {
+    __shared__ float local[BLOCK_SIZE * 2];
+
+    // Collaborative loading of the input vector (two elements per thread)
+    unsigned int tx = threadIdx.x,
+                 offset = (blockIdx.x * BLOCK_SIZE + tx) * 2;
+    local[tx * 2] = (offset < len ? input[offset] : 0);
+    local[tx * 2 + 1] = (offset + 1 < len ? input[offset + 1] : 0);
+
+    // For each level of the reduction tree
+    for(int stride = BLOCK_SIZE; stride > 0; stride /= 2) {
+        __syncthreads();
+        // After each step, half the threads go unused
+        // We make sure to keep using adjacent threads so as to minimize
+        // control divergence between warps
+        if(tx < stride) {
+            local[tx] = local[tx] + local[tx + stride];
+        }
+    }
+
+    // Output the partial sum for this block
+    if(tx == 0) {
+        output[blockIdx.x] = local[0];
+    }
 }
 
 int main(int argc, char ** argv) {
@@ -58,17 +82,17 @@ int main(int argc, char ** argv) {
     wbTime_stop(GPU, "Copying input memory to the GPU.");
 
     //@@ Initialize the grid and block dimensions here
-    // TODO
-    dim3 gridSize(1, 1, 1);
+    // Each thread handles two input elements
+    dim3 gridSize( (numInputElements - 1) / (BLOCK_SIZE * 2) + 1, 1, 1);
     dim3 blockSize(BLOCK_SIZE, 1, 1);
     wbTime_start(Compute, "Performing CUDA computation");
     //@@ Launch the GPU Kernel here
-
+    total<<<gridSize, blockSize>>>(deviceInput, deviceOutput, numInputElements);
     cudaDeviceSynchronize();
     wbTime_stop(Compute, "Performing CUDA computation");
 
     wbTime_start(Copy, "Copying output memory to the CPU");
-    wbCheck(cudaMemcpy(hostOutput, deviceInput, numOutputElements * sizeof(float), cudaMemcpyDeviceToHost));
+    wbCheck(cudaMemcpy(hostOutput, deviceOutput, numOutputElements * sizeof(float), cudaMemcpyDeviceToHost));
     wbTime_stop(Copy, "Copying output memory to the CPU");
 
     /********************************************************************
