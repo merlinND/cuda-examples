@@ -1,7 +1,7 @@
 #include    <wb.h>
 
 /**
- * Code made available on webgpu.com
+ * Uses code made available on webgpu.com
  * by the Heterogeneous Parallel Programming MOOC teaching team
  */
 

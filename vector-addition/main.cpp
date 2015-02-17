@@ -2,7 +2,7 @@
 #include <wb.h>
 
 /**
- * Code stub made available on webgpu.com
+ * Uses code stub made available on webgpu.com
  * by the Heterogeneous Parallel Programming MOOC teaching team
  */
 
