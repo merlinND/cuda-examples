@@ -46,14 +46,14 @@ __device__ void postProcessing(float * local) {
     }
 }
 
-__global__ void scan(float * input, float * output, float * offsets, int len) {
+__global__ void scan(float * input, float * offsets, int len) {
     __shared__ float local[BLOCK_SIZE * 2];
 
     // Collaborative loading of the input vector (two element per thread)
     unsigned int tx = threadIdx.x,
-                 offset = (blockIdx.x * BLOCK_SIZE + tx) * 2;
-    local[tx * 2] = (offset < len ? input[offset] : 0);
-    local[tx * 2 + 1] = (offset + 1 < len ? input[offset + 1] : 0);
+                 index = (blockIdx.x * BLOCK_SIZE + tx) * 2;
+    local[tx * 2] = (index < len ? input[index] : 0);
+    local[tx * 2 + 1] = (index + 1 < len ? input[index + 1] : 0);
     __syncthreads();
 
     // Phase 1: reduction tree (similar to a simple list reduction)
@@ -64,10 +64,35 @@ __global__ void scan(float * input, float * output, float * offsets, int len) {
     // partial sum. We need to complete the missing ones.
     postProcessing(local);
 
-    // Output
-    int ox = blockIdx.x * BLOCK_SIZE + tx;
-    if(ox < len) {
-        output[ox] = local[tx];
+    // Output last element into the `offsets` array for this block
+    if(len > BLOCK_SIZE * 2) {
+        if(tx == BLOCK_SIZE * 2 - 1) {
+            offsets[blockIdx.x] = local[tx];
+        }
+    }
+
+    // Save partial result
+    input[index] = local[tx * 2];
+    input[index + 1] = local[tx * 2 + 1];
+}
+
+__global__ void applyOffsets(float * incomplete, float * output, float * offsets, int len) {
+    int offset = 0;
+    if(blockIdx.x > 0) {
+        offset = offsets[blockIdx.x - 1];
+    }
+
+    // Output the final result
+    unsigned int tx = threadIdx.x,
+                 index = (blockIdx.x * BLOCK_SIZE + tx) * 2;
+    if(index < len) {
+        // TODO: avoid this global memory access to `incomplete`
+        output[index] = incomplete[tx * 2] + offset;
+    }
+    // TODO: avoid duplicate code
+    if(index + 1 < len) {
+        // TODO: avoid this global memory access to `incomplete`
+        output[index + 1] = incomplete[tx * 2 + 1] + offset;
     }
 }
 
@@ -99,6 +124,7 @@ int main(int argc, char ** argv) {
 
     wbTime_start(GPU, "Clearing output memory.");
     // Set all output elements to zero (default value)
+    wbCheck(cudaMemset(deviceOffsets, 0, numBlocks*sizeof(float)));
     wbCheck(cudaMemset(deviceOutput, 0, numElements*sizeof(float)));
     wbTime_stop(GPU, "Clearing output memory.");
 
@@ -110,7 +136,17 @@ int main(int argc, char ** argv) {
     dim3 gridSize(numBlocks, 1, 1);
     dim3 blockSize(BLOCK_SIZE, 1, 1);
     wbTime_start(Compute, "Performing CUDA computation");
-    scan<<<gridSize, blockSize>>>(deviceInput, deviceOutput, deviceOffsets, numElements);
+    // Initial scan, performed on sections of the input separately
+    scan<<<gridSize, blockSize>>>(deviceInput, deviceOffsets, numElements);
+    cudaDeviceSynchronize();
+
+    // Applying prefix-sum to the offsets
+    // WARNING: we assume `numBlocks <= BLOCK_SIZE`
+    wbAssert(numBlocks <= BLOCK_SIZE);
+    scan<<<1, BLOCK_SIZE>>>(deviceOffsets, NULL, numBlocks);
+
+    // Applying the offsets to each section
+    applyOffsets<<<gridSize, blockSize>>>(deviceInput, deviceOutput, deviceOffsets, numElements);
     cudaDeviceSynchronize();
     wbTime_stop(Compute, "Performing CUDA computation");
 
