@@ -46,15 +46,21 @@ __device__ void postProcessing(float * local) {
     }
 }
 
-__global__ void scan(float * input, float * offsets, int len) {
-    __shared__ float local[BLOCK_SIZE * 2];
-
+__device__ void collaborativeLoad(float * destination, float * source, int len) {
     // Collaborative loading of the input vector (two element per thread)
     unsigned int tx = threadIdx.x,
                  index = (blockIdx.x * BLOCK_SIZE + tx) * 2;
-    local[tx * 2] = (index < len ? input[index] : 0);
-    local[tx * 2 + 1] = (index + 1 < len ? input[index + 1] : 0);
+    destination[tx * 2] = (index < len ? source[index] : 0);
+    destination[tx * 2 + 1] = (index + 1 < len ? source[index + 1] : 0);
     __syncthreads();
+}
+
+__global__ void scan(float * input, float * offsets, int len) {
+    unsigned int tx = threadIdx.x,
+                 index = (blockIdx.x * BLOCK_SIZE + tx) * 2;
+
+    __shared__ float local[BLOCK_SIZE * 2];
+    collaborativeLoad(&(local[0]), input, len);
 
     // Phase 1: reduction tree (similar to a simple list reduction)
     listReduction(local);
@@ -77,21 +83,25 @@ __global__ void scan(float * input, float * offsets, int len) {
 }
 
 __global__ void applyOffsets(float * incomplete, float * output, float * offsets, int len) {
-    // TODO: use shared memory for `offset` and `incomplete`
-
-    int offset = 0;
-    if(blockIdx.x > 0) {
-        offset = offsets[blockIdx.x - 1];
-    }
-
-    // Output the final result
     unsigned int tx = threadIdx.x,
                  index = (blockIdx.x * BLOCK_SIZE + tx) * 2;
+
+    __shared__ float local[BLOCK_SIZE * 2];
+    collaborativeLoad(&(local[0]), incomplete, len);
+
+    __shared__ int offset;
+    if(tx == 0) {
+        offset = (blockIdx.x == 0 ? 0 : offsets[blockIdx.x - 1]);
+    }
+    __syncthreads();
+
+
+    // Output the final result
     if(index < len) {
-        output[index] = incomplete[index] + offset;
+        output[index] = local[tx * 2] + offset;
     }
     if(index + 1 < len) {
-        output[index + 1] = incomplete[index + 1] + offset;
+        output[index + 1] = local[tx * 2 + 1] + offset;
     }
 }
 
