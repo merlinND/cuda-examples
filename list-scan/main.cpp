@@ -66,8 +66,8 @@ __global__ void scan(float * input, float * offsets, int len) {
 
     // Output last element into the `offsets` array for this block
     if(len > BLOCK_SIZE * 2) {
-        if(tx == BLOCK_SIZE * 2 - 1) {
-            offsets[blockIdx.x] = local[tx];
+        if(tx == 0) {
+            offsets[blockIdx.x] = local[BLOCK_SIZE * 2 - 1];
         }
     }
 
@@ -77,6 +77,8 @@ __global__ void scan(float * input, float * offsets, int len) {
 }
 
 __global__ void applyOffsets(float * incomplete, float * output, float * offsets, int len) {
+    // TODO: use shared memory for `offset` and `incomplete`
+
     int offset = 0;
     if(blockIdx.x > 0) {
         offset = offsets[blockIdx.x - 1];
@@ -86,13 +88,10 @@ __global__ void applyOffsets(float * incomplete, float * output, float * offsets
     unsigned int tx = threadIdx.x,
                  index = (blockIdx.x * BLOCK_SIZE + tx) * 2;
     if(index < len) {
-        // TODO: avoid this global memory access to `incomplete`
-        output[index] = incomplete[tx * 2] + offset;
+        output[index] = incomplete[index] + offset;
     }
-    // TODO: avoid duplicate code
     if(index + 1 < len) {
-        // TODO: avoid this global memory access to `incomplete`
-        output[index + 1] = incomplete[tx * 2 + 1] + offset;
+        output[index + 1] = incomplete[index + 1] + offset;
     }
 }
 
@@ -104,7 +103,7 @@ int main(int argc, char ** argv) {
     float * deviceOffsets;
     float * deviceOutput;
     int numElements; // number of elements in the list
-    int numBlocks;
+    int numBlocks; // number of input segments that we will handle
 
     args = wbArg_read(argc, argv);
 
@@ -141,9 +140,10 @@ int main(int argc, char ** argv) {
     cudaDeviceSynchronize();
 
     // Applying prefix-sum to the offsets
-    // WARNING: we assume `numBlocks <= BLOCK_SIZE`
+    // WARNING: this is not truly generic, we assume `numBlocks <= BLOCK_SIZE`
     wbAssert(numBlocks <= BLOCK_SIZE);
     scan<<<1, BLOCK_SIZE>>>(deviceOffsets, NULL, numBlocks);
+    cudaDeviceSynchronize();
 
     // Applying the offsets to each section
     applyOffsets<<<gridSize, blockSize>>>(deviceInput, deviceOutput, deviceOffsets, numElements);
