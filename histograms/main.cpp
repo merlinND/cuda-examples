@@ -8,7 +8,8 @@
  */
 
 #define HISTOGRAM_LENGTH 256
-#define TILE_SIZE 16
+#define TILE_SIZE 16 // TILE_SIZE ^ 2 must be >= HISTOGRAM_LENGTH
+#define N_CHANNELS 3
 
 #define wbCheck(stmt) do {                                                    \
         cudaError_t err = stmt;                                               \
@@ -28,7 +29,47 @@ typedef unsigned long long histogram_count;
  */
 __global__ void computeGrayscaleHistogram(float * inputImage, histogram_count * histogram,
                                           int width, int height) {
-    // TODO
+    int ti = threadIdx.y,
+        tj = threadIdx.x;
+    int i = (blockIdx.y * TILE_SIZE + ti) * N_CHANNELS,
+        j = (blockIdx.x * TILE_SIZE + tj) * N_CHANNELS,
+        localIndex = ti * TILE_SIZE + tj;
+
+    // Collaborative loading of this block's image tile
+    // At the same time, we convert the image from [0; 1] values to [0; 255] values
+    __shared__ unsigned char imageTile[TILE_SIZE][TILE_SIZE][N_CHANNELS];
+    __shared__ histogram_count localHistogram[HISTOGRAM_LENGTH];
+    if(i < height && j < width) {
+        for(int k = 0; k < N_CHANNELS; ++k) {
+            float value = inputImage[(i * width + j) + k];
+            imageTile[ti][tj][k] = (unsigned char)(value * 255.f);
+        }
+    }
+    else {
+        for(int k = 0; k < N_CHANNELS; ++k) {
+            imageTile[ti][tj][k] = 0;
+        }
+    }
+    if(localIndex < HISTOGRAM_LENGTH) {
+        localHistogram[localIndex] = 0;
+    }
+    __syncthreads();
+
+    // Accumulate histogram values (locally, in order to
+    // reduce the number of atomic operations)
+    unsigned char value = 0;
+    for(int k = 0; k < N_CHANNELS; ++k) {
+        value += imageTile[ti][tj][k];
+    }
+    value /= N_CHANNELS; // This stays an `unsigned char`
+    atomicAdd(&(localHistogram[value]), 1);
+    __syncthreads();
+
+    // Output histogram values to global memory (must use slower atomic operations)
+    if(localIndex < HISTOGRAM_LENGTH) {
+        atomicAdd(&(histogram[localIndex]), localHistogram[localIndex]);
+    }
+    __syncthreads();
 }
 
 __global__ void histogramEqualization(float * inputImage, float * outputImage, histogram_count * histogram,
@@ -73,6 +114,9 @@ int main(int argc, char ** argv) {
     histogramSize = HISTOGRAM_LENGTH * sizeof(histogram_count);
     wbTime_stop(Generic, "Importing data and creating memory on host");
 
+    // WARNING: we assume imageChannels == 3
+    assert(imageChannels == N_CHANNELS);
+    assert(TILE_SIZE * TILE_SIZE >= HISTOGRAM_LENGTH);
 
     wbTime_start(GPU, "Doing GPU memory allocation");
     wbCheck(cudaMalloc((void **) &deviceInputImageData, imageSize));
