@@ -21,6 +21,7 @@
     } while(0)
 
 typedef unsigned long long histogram_count;
+typedef unsigned char uchar;
 
 __device__ void getIndices(int * ti, int * tj, int * i, int * j) {
     // Various useful indices
@@ -30,7 +31,7 @@ __device__ void getIndices(int * ti, int * tj, int * i, int * j) {
     (*j ) = (blockIdx.x * TILE_SIZE + (*tj)) * N_CHANNELS;
 }
 
-__device__ void loadImageTile(float * inputImage, unsigned char * imageTile,
+__device__ void loadImageTile(float * inputImage, uchar * imageTile,
                               int width, int height,
                               int ti, int tj, int i, int j) {
     // Collaborative loading of this block's image tile
@@ -38,7 +39,7 @@ __device__ void loadImageTile(float * inputImage, unsigned char * imageTile,
     if(i < height && j < width) {
         for(int k = 0; k < N_CHANNELS; ++k) {
             float value = inputImage[(i * width + j) + k];
-            imageTile[(ti * TILE_SIZE + tj) * N_CHANNELS + k] = (unsigned char)(value * 255.f);
+            imageTile[(ti * TILE_SIZE + tj) * N_CHANNELS + k] = (uchar)(value * 255.f);
         }
     }
     else {
@@ -60,7 +61,7 @@ __global__ void computeGrayscaleHistogram(float * inputImage, histogram_count * 
     int localIndex = ti * TILE_SIZE + tj;
 
     // Collaborative loading to shared memory
-    __shared__ unsigned char imageTile[TILE_SIZE][TILE_SIZE][N_CHANNELS];
+    __shared__ uchar imageTile[TILE_SIZE][TILE_SIZE][N_CHANNELS];
     loadImageTile(inputImage, &(imageTile[0][0][0]), width, height, ti, tj, i, j);
 
     // Initializing the local copy histogram accumulator
@@ -72,11 +73,11 @@ __global__ void computeGrayscaleHistogram(float * inputImage, histogram_count * 
 
     // Accumulate histogram values (locally, in order to
     // reduce the number of atomic operations)
-    unsigned char value = 0;
+    uchar value = 0;
     for(int k = 0; k < N_CHANNELS; ++k) {
         value += imageTile[ti][tj][k];
     }
-    value /= N_CHANNELS; // This stays an `unsigned char`
+    value /= N_CHANNELS; // This stays an `uchar`
     atomicAdd(&(localHistogram[value]), 1);
     __syncthreads();
 
