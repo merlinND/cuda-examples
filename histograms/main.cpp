@@ -23,6 +23,10 @@
 typedef unsigned long long histogram_count;
 typedef unsigned char uchar;
 
+__device__ uchar clamp(uchar value, uchar least, uchar most) {
+    return min(max(value, least), most);
+}
+
 __device__ void getIndices(int * ti, int * tj, int * i, int * j) {
     // Various useful indices
     (*ti) = threadIdx.y;
@@ -88,12 +92,21 @@ __global__ void computeGrayscaleHistogram(float * inputImage, histogram_count * 
     __syncthreads();
 }
 
-__global__ void histogramEqualization(float * inputImage, float * outputImage, histogram_count * histogram,
-                                      int width, int height) {
+__global__ void cumulativeDistributionFunction(histogram_count * histogram, float * distribution) {
     // TODO
 }
 
-// TODO: use only one main kernel so as to need only one load to shared memory?
+__global__ void findDistributionMin(float * distribution, float * minValue) {
+    // TODO
+
+    (*minValue) = 0;
+}
+
+__global__ void histogramEqualization(float * inputImage, float * outputImage,
+                                      float * distribution, float distributionMin,
+                                      int width, int height) {
+    // TODO
+}
 
 int main(int argc, char ** argv) {
     wbArg_t args;
@@ -106,11 +119,11 @@ int main(int argc, char ** argv) {
     float * hostOutputImageData;
     float * deviceInputImageData;
     histogram_count * deviceHistogram;
+    float * deviceDistribution; // Cumulative distribution
+    float distributionMin; // Minimum nonzero value of the CDF
     float * deviceOutputImageData;
     const char * inputImageFile;
-    int imageSize, histogramSize;
-
-    //@@ Insert more code here
+    int imageSize, histogramSize, distributionSize;
 
     args = wbArg_read(argc, argv); /* parse the input arguments */
 
@@ -128,6 +141,7 @@ int main(int argc, char ** argv) {
 
     imageSize = imageWidth * imageHeight * imageChannels * sizeof(float);
     histogramSize = HISTOGRAM_LENGTH * sizeof(histogram_count);
+    distributionSize = HISTOGRAM_LENGTH * sizeof(float);
     wbTime_stop(Generic, "Importing data and creating memory on host");
 
     // WARNING: we assume imageChannels == 3
@@ -137,12 +151,14 @@ int main(int argc, char ** argv) {
     wbTime_start(GPU, "Doing GPU memory allocation");
     wbCheck(cudaMalloc((void **) &deviceInputImageData, imageSize));
     wbCheck(cudaMalloc((void **) &deviceHistogram, histogramSize));
+    wbCheck(cudaMalloc((void **) &deviceDistribution, distributionSize));
     wbCheck(cudaMalloc((void **) &deviceOutputImageData, imageSize));
     wbTime_stop(GPU, "Doing GPU memory allocation");
 
     wbTime_start(Copy, "Copying data to the GPU");
     wbCheck(cudaMemcpy(deviceInputImageData, hostInputImageData, imageSize, cudaMemcpyHostToDevice));
     wbCheck(cudaMemset(deviceHistogram, 0, histogramSize));
+    wbCheck(cudaMemset(deviceDistribution, 0, distributionSize));
     wbTime_stop(Copy, "Copying data to the GPU");
 
     wbTime_start(Compute, "Doing the computation on the GPU");
@@ -158,9 +174,22 @@ int main(int argc, char ** argv) {
                                                        imageWidth, imageHeight);
     cudaDeviceSynchronize();
 
-    // Step 2: histogram equalization
+    // Step 2: cumulative distribution function of the histogram
+    // This is equivalent to a scan (i.e. prefix-sum) operation
+    // TODO
+    cumulativeDistributionFunction<<<1, HISTOGRAM_LENGTH>>>(deviceHistogram, deviceDistribution);
+    cudaDeviceSynchronize();
+
+    // Step 3: find the minimum nonzero value of the CDF
+    // in order to be able to rescale it
+    // This is equivalent to a list reduction using the `min` operation
+    // TODO
+    findDistributionMin<<<1, HISTOGRAM_LENGTH>>>(deviceDistribution, &distributionMin);
+    cudaDeviceSynchronize();
+
+    // Step 4: histogram equalization
     histogramEqualization<<<gridSize, blockSize>>>(deviceInputImageData, deviceOutputImageData,
-                                                   deviceHistogram,
+                                                   deviceDistribution, distributionMin,
                                                    imageWidth, imageHeight);
     cudaDeviceSynchronize();
     wbTime_stop(Compute, "Doing the computation on the GPU");
