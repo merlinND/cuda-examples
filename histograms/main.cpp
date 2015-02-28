@@ -92,14 +92,62 @@ __global__ void computeGrayscaleHistogram(float * inputImage, histogram_count * 
     __syncthreads();
 }
 
-__global__ void cumulativeDistributionFunction(histogram_count * histogram, float * distribution) {
-    // TODO
+__global__ void cumulativeDistributionFunction(histogram_count * histogram, float * distribution,
+                                               int width, int height) {
+    int tx = threadIdx.x; // Goes up to (HISTOGRAM_LENGTH / 2) - 1
+    // Collaborative loading, each thread handles two elements
+    __shared__ float local[HISTOGRAM_LENGTH];
+    local[tx * 2] = histogram[tx * 2] / (width * height);
+    local[tx * 2 + 1] = histogram[tx * 2 + 1] / (width * height);
+    __syncthreads();
+
+    // ----- Prefix sum computation
+
+    // 1. Reduction tree
+    for(int stride = 1; stride < HISTOGRAM_LENGTH; stride *= 2) {
+        int index = (tx + 1) * stride * 2 - 1;
+        if(index < HISTOGRAM_LENGTH) {
+            local[index] = local[index] + local[index - stride];
+        }
+        __syncthreads();
+    }
+
+    // 2. Fixup step
+    for(int stride = HISTOGRAM_LENGTH / 2; stride >= 1; stride /= 2) {
+        int index = (tx + 1) * stride * 2 - 1;
+
+        // At each step, twice as many threads go to use
+        if(index + stride < HISTOGRAM_LENGTH) {
+            local[index + stride] = local[index + stride] + local[index];
+        }
+        __syncthreads();
+    }
+
+    // ----- Output
+    distribution[tx] = local[tx];
 }
 
 __global__ void findDistributionMin(float * distribution, float * minValue) {
-    // TODO
+    int tx = threadIdx.x; // Goes up to (HISTOGRAM_LENGTH / 2) - 1
+    // Collaborative loading, each thread handles two elements
+    __shared__ float local[HISTOGRAM_LENGTH];
+    local[tx * 2] = distribution[tx * 2];
+    local[tx * 2 + 1] = distribution[tx * 2 + 1];
+    __syncthreads();
 
-    (*minValue) = 0;
+    // TODO: should consider nonzero values only!
+
+    // ----- List reduction over `distribution` using the `min` operation
+    for(int stride = 1; stride < HISTOGRAM_LENGTH; stride *= 2) {
+        int index = (tx * stride * 2);
+        if(index + stride < HISTOGRAM_LENGTH) {
+            local[index] = min(local[index], local[index + stride]);
+        }
+        __syncthreads();
+    }
+
+    // ----- Output
+    (*minValue) = local[0];
 }
 
 __global__ void histogramEqualization(float * inputImage, float * outputImage,
@@ -176,15 +224,14 @@ int main(int argc, char ** argv) {
 
     // Step 2: cumulative distribution function of the histogram
     // This is equivalent to a scan (i.e. prefix-sum) operation
-    // TODO
-    cumulativeDistributionFunction<<<1, HISTOGRAM_LENGTH>>>(deviceHistogram, deviceDistribution);
+    cumulativeDistributionFunction<<<1, HISTOGRAM_LENGTH / 2>>>(deviceHistogram, deviceDistribution,
+                                                                imageWidth, imageHeight);
     cudaDeviceSynchronize();
 
     // Step 3: find the minimum nonzero value of the CDF
     // in order to be able to rescale it
     // This is equivalent to a list reduction using the `min` operation
-    // TODO
-    findDistributionMin<<<1, HISTOGRAM_LENGTH>>>(deviceDistribution, &distributionMin);
+    findDistributionMin<<<1, HISTOGRAM_LENGTH / 2>>>(deviceDistribution, &distributionMin);
     cudaDeviceSynchronize();
 
     // Step 4: histogram equalization
