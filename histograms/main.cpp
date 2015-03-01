@@ -135,13 +135,17 @@ __global__ void findDistributionMin(float * distribution, float * minValue) {
     local[tx * 2 + 1] = distribution[tx * 2 + 1];
     __syncthreads();
 
-    // TODO: should consider nonzero values only!
-
     // ----- List reduction over `distribution` using the `min` operation
     for(int stride = 1; stride < HISTOGRAM_LENGTH; stride *= 2) {
         int index = (tx * stride * 2);
         if(index + stride < HISTOGRAM_LENGTH) {
-            local[index] = min(local[index], local[index + stride]);
+            // We want the minimal nonzero value
+            if(local[index] == 0) {
+                local[index] = local[index + stride];
+            }
+            else {
+                local[index] = min(local[index], local[index + stride]);
+            }
         }
         __syncthreads();
     }
@@ -153,7 +157,21 @@ __global__ void findDistributionMin(float * distribution, float * minValue) {
 __global__ void histogramEqualization(float * inputImage, float * outputImage,
                                       float * distribution, float distributionMin,
                                       int width, int height) {
-    // TODO
+    int ti, tj, i, j;
+    getIndices(&ti, &tj, &i, &j);
+
+    // Color correction to obtain a linear cumulative distribution function
+    if(i < height && j < width) {
+        int index = (i * width + j) * N_CHANNELS;
+        for(int k = 0; k < N_CHANNELS; ++k) {
+            uchar oldValue = (uchar)(inputImage[index + k] * 255.f),
+                  newValue = (distribution[oldValue] - distributionMin) / (1.f - distributionMin);
+            newValue = clamp((uchar)(255 * newValue), 0, 255);
+
+            // Output
+            outputImage[index + k] = (float)(newValue / 255.f);
+        }
+    }
 }
 
 int main(int argc, char ** argv) {
@@ -234,7 +252,7 @@ int main(int argc, char ** argv) {
     findDistributionMin<<<1, HISTOGRAM_LENGTH / 2>>>(deviceDistribution, &distributionMin);
     cudaDeviceSynchronize();
 
-    // Step 4: histogram equalization
+    // Step 4: actual histogram equalization
     histogramEqualization<<<gridSize, blockSize>>>(deviceInputImageData, deviceOutputImageData,
                                                    deviceDistribution, distributionMin,
                                                    imageWidth, imageHeight);
