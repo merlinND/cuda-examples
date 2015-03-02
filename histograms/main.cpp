@@ -43,7 +43,7 @@ __device__ void loadImageTile(float * inputImage, uchar * imageTile,
     if(i < height && j < width) {
         for(int k = 0; k < N_CHANNELS; ++k) {
             float value = inputImage[(i * width + j) + k];
-            imageTile[(ti * TILE_SIZE + tj) * N_CHANNELS + k] = (uchar)(value * 255.f);
+            imageTile[(ti * TILE_SIZE + tj) * N_CHANNELS + k] = (uchar)(value * 255);
         }
     }
     else {
@@ -77,11 +77,11 @@ __global__ void computeGrayscaleHistogram(float * inputImage, histogram_count * 
 
     // Accumulate histogram values (locally, in order to
     // reduce the number of atomic operations)
-    uchar value = 0;
-    for(int k = 0; k < N_CHANNELS; ++k) {
-        value += imageTile[ti][tj][k];
-    }
-    value /= N_CHANNELS; // This stays an `uchar`
+    // Simultaneously, we convert to luminosity value
+    // Warning: we assume an RGB image
+    uchar value = (uchar)(0.21f * imageTile[ti][tj][0]
+                        + 0.71f * imageTile[ti][tj][1]
+                        + 0.07f * imageTile[ti][tj][2]);
     atomicAdd(&(localHistogram[value]), 1);
     __syncthreads();
 
