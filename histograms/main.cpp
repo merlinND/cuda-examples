@@ -97,8 +97,8 @@ __global__ void cumulativeDistributionFunction(histogram_count * histogram, floa
     int tx = threadIdx.x; // Goes up to (HISTOGRAM_LENGTH / 2) - 1
     // Collaborative loading, each thread handles two elements
     __shared__ float local[HISTOGRAM_LENGTH];
-    local[tx * 2] = histogram[tx * 2] / (width * height);
-    local[tx * 2 + 1] = histogram[tx * 2 + 1] / (width * height);
+    local[tx * 2] = histogram[tx * 2] / (float)(width * height);
+    local[tx * 2 + 1] = histogram[tx * 2 + 1] / (float)(width * height);
     __syncthreads();
 
     // ----- Prefix sum computation
@@ -155,23 +155,25 @@ __global__ void findDistributionMin(float * distribution, float * minValue) {
 }
 
 __global__ void histogramEqualization(float * inputImage, float * outputImage,
-                                      float * distribution, float distributionMin,
+                                      float * distribution, float * distributionMin,
                                       int width, int height) {
     int ti, tj, i, j;
     getIndices(&ti, &tj, &i, &j);
 
     // Color correction to obtain a linear cumulative distribution function
     if(i < height && j < width) {
-        int index = (i * width + j) * N_CHANNELS;
+        // TODO: i and j have already been multiplied by N_CHANNELS
+        int index = (i * width * N_CHANNELS + j);
         for(int k = 0; k < N_CHANNELS; ++k) {
             uchar oldValue = (uchar)(inputImage[index + k] * 255.f),
-                  newValue = (distribution[oldValue] - distributionMin) / (1.f - distributionMin);
+                  newValue = (distribution[oldValue] - (*distributionMin)) / (1.f - (*distributionMin));
             newValue = clamp((uchar)(255 * newValue), 0, 255);
 
             // Output
             outputImage[index + k] = (float)(newValue / 255.f);
         }
     }
+    __syncthreads();
 }
 
 int main(int argc, char ** argv) {
@@ -186,7 +188,7 @@ int main(int argc, char ** argv) {
     float * deviceInputImageData;
     histogram_count * deviceHistogram;
     float * deviceDistribution; // Cumulative distribution
-    float distributionMin; // Minimum nonzero value of the CDF
+    float * distributionMin; // Minimum nonzero value of the CDF
     float * deviceOutputImageData;
     const char * inputImageFile;
     int imageSize, histogramSize, distributionSize;
@@ -214,10 +216,14 @@ int main(int argc, char ** argv) {
     assert(imageChannels == N_CHANNELS);
     assert(TILE_SIZE * TILE_SIZE >= HISTOGRAM_LENGTH);
 
+    wbLog(TRACE, "Image dimensions (width, height): ", imageWidth, ", ", imageHeight);
+
+
     wbTime_start(GPU, "Doing GPU memory allocation");
     wbCheck(cudaMalloc((void **) &deviceInputImageData, imageSize));
     wbCheck(cudaMalloc((void **) &deviceHistogram, histogramSize));
     wbCheck(cudaMalloc((void **) &deviceDistribution, distributionSize));
+    wbCheck(cudaMalloc((void **) &distributionMin, sizeof(float)));
     wbCheck(cudaMalloc((void **) &deviceOutputImageData, imageSize));
     wbTime_stop(GPU, "Doing GPU memory allocation");
 
@@ -249,7 +255,7 @@ int main(int argc, char ** argv) {
     // Step 3: find the minimum nonzero value of the CDF
     // in order to be able to rescale it
     // This is equivalent to a list reduction using the `min` operation
-    findDistributionMin<<<1, HISTOGRAM_LENGTH / 2>>>(deviceDistribution, &distributionMin);
+    findDistributionMin<<<1, HISTOGRAM_LENGTH / 2>>>(deviceDistribution, distributionMin);
     cudaDeviceSynchronize();
 
     // Step 4: actual histogram equalization
@@ -266,15 +272,19 @@ int main(int argc, char ** argv) {
                cudaMemcpyDeviceToHost);
     wbTime_stop(Copy, "Copying data back from the GPU");
 
-    wbSolution(args, outputImage);
 
     wbTime_start(GPU, "Freeing memory");
     wbCheck(cudaFree(deviceInputImageData));
     wbCheck(cudaFree(deviceHistogram));
+    wbCheck(cudaFree(deviceDistribution));
+    wbCheck(cudaFree(distributionMin));
     wbCheck(cudaFree(deviceOutputImageData));
+    wbTime_stop(GPU, "Freeing memory");
+
+
+    wbSolution(args, outputImage);
     wbImage_delete(outputImage);
     wbImage_delete(inputImage);
-    wbTime_stop(GPU, "Freeing memory");
 
     return 0;
 }
