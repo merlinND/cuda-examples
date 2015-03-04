@@ -23,10 +23,6 @@
 typedef unsigned long long histogram_count;
 typedef unsigned char uchar;
 
-__device__ uchar clamp(uchar value, uchar least, uchar most) {
-    return min(max(value, least), most);
-}
-
 __device__ void getIndices(int * ti, int * tj, int * i, int * j) {
     // Various useful indices
     (*ti) = threadIdx.y;
@@ -124,9 +120,13 @@ __global__ void cumulativeDistributionFunction(histogram_count * histogram, floa
     }
 
     // ----- Output
-    distribution[tx] = local[tx];
+    distribution[tx * 2] = local[tx * 2];
+    distribution[tx * 2 + 1] = local[tx * 2 + 1];
 }
 
+/**
+ * Find the minimum nonzero value of the CDF
+ */
 __global__ void findDistributionMin(float * distribution, float * minValue) {
     int tx = threadIdx.x; // Goes up to (HISTOGRAM_LENGTH / 2) - 1
     // Collaborative loading, each thread handles two elements
@@ -151,7 +151,10 @@ __global__ void findDistributionMin(float * distribution, float * minValue) {
     }
 
     // ----- Output
-    (*minValue) = local[0];
+    if(tx == 0) {
+        (*minValue) = local[0];
+    }
+    __syncthreads();
 }
 
 __global__ void histogramEqualization(float * inputImage, float * outputImage,
@@ -160,17 +163,20 @@ __global__ void histogramEqualization(float * inputImage, float * outputImage,
     int ti, tj, i, j;
     getIndices(&ti, &tj, &i, &j);
 
+    float base = (*distributionMin);
+
     // Color correction to obtain a linear cumulative distribution function
     if(i < height && j < width) {
         // TODO: i and j have already been multiplied by N_CHANNELS
         int index = (i * width * N_CHANNELS + j);
         for(int k = 0; k < N_CHANNELS; ++k) {
-            uchar oldValue = (uchar)(inputImage[index + k] * 255.f),
-                  newValue = (distribution[oldValue] - (*distributionMin)) / (1.f - (*distributionMin));
-            newValue = clamp((uchar)(255 * newValue), 0, 255);
+            uchar oldValue = (uchar)(inputImage[index + k] * 255);
+            float newValue = (distribution[oldValue] - base) / (1.f - base);
+            // Clamp value to the acceptable range
+            newValue = fmin(fmax(newValue, 0.f), 1.f);
 
             // Output
-            outputImage[index + k] = (float)(newValue / 255.f);
+            outputImage[index + k] = newValue;
         }
     }
     __syncthreads();
