@@ -27,8 +27,8 @@ __device__ void getIndices(int * ti, int * tj, int * i, int * j) {
     // Various useful indices
     (*ti) = threadIdx.y;
     (*tj) = threadIdx.x;
-    (*i ) = (blockIdx.y * TILE_SIZE + (*ti)) * N_CHANNELS;
-    (*j ) = (blockIdx.x * TILE_SIZE + (*tj)) * N_CHANNELS;
+    (*i ) = (blockIdx.y * TILE_SIZE) + threadIdx.y;
+    (*j ) = (blockIdx.x * TILE_SIZE) + threadIdx.x;
 }
 
 __device__ void loadImageTile(float * inputImage, uchar * imageTile,
@@ -38,7 +38,7 @@ __device__ void loadImageTile(float * inputImage, uchar * imageTile,
     // At the same time, we convert the image from [0; 1] values to [0; 255] values
     if(i < height && j < width) {
         for(int k = 0; k < N_CHANNELS; ++k) {
-            float value = inputImage[(i * width + j) + k];
+            float value = inputImage[(i * width + j) * N_CHANNELS + k];
             imageTile[(ti * TILE_SIZE + tj) * N_CHANNELS + k] = (uchar)(value * 255);
         }
     }
@@ -122,6 +122,7 @@ __global__ void cumulativeDistributionFunction(histogram_count * histogram, floa
     // ----- Output
     distribution[tx * 2] = local[tx * 2];
     distribution[tx * 2 + 1] = local[tx * 2 + 1];
+    __syncthreads();
 }
 
 /**
@@ -167,8 +168,7 @@ __global__ void histogramEqualization(float * inputImage, float * outputImage,
 
     // Color correction to obtain a linear cumulative distribution function
     if(i < height && j < width) {
-        // TODO: i and j have already been multiplied by N_CHANNELS
-        int index = (i * width * N_CHANNELS + j);
+        int index = (i * width + j) * N_CHANNELS;
         for(int k = 0; k < N_CHANNELS; ++k) {
             uchar oldValue = (uchar)(inputImage[index + k] * 255);
             float newValue = (distribution[oldValue] - base) / (1.f - base);
@@ -273,9 +273,7 @@ int main(int argc, char ** argv) {
 
 
     wbTime_start(Copy, "Copying data back from the GPU");
-    cudaMemcpy(hostOutputImageData, deviceOutputImageData,
-               imageSize,
-               cudaMemcpyDeviceToHost);
+    wbCheck(cudaMemcpy(hostOutputImageData, deviceOutputImageData, imageSize, cudaMemcpyDeviceToHost));
     wbTime_stop(Copy, "Copying data back from the GPU");
 
 
